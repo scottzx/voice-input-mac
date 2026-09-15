@@ -30,11 +30,8 @@ run: app
 	open "$(APP)"
 
 install: app
-	mkdir -p "$(HOME)/Applications" "$(HOME)/.voice_input_mac/models"
+	mkdir -p "$(HOME)/Applications"
 	rsync -a --delete "$(APP)" "$(HOME)/Applications/VoiceInputMac.app"
-	if [ ! -e "$(HOME)/.voice_input_mac/models/SenseVoiceSmall-Q8_0.gguf" ] && [ -f "$(TRANSCRIBE_CPP)/models/SenseVoiceSmall-Q8_0.gguf" ]; then \
-		ln -s "$(TRANSCRIBE_CPP)/models/SenseVoiceSmall-Q8_0.gguf" "$(HOME)/.voice_input_mac/models/SenseVoiceSmall-Q8_0.gguf"; \
-	fi
 	@echo "installed $(HOME)/Applications/VoiceInputMac.app"
 
 clean:

@@ -1,6 +1,7 @@
 import AppKit
 import Combine
 import Foundation
+import UniformTypeIdentifiers
 import VoiceInputCore
 
 @MainActor
@@ -22,11 +23,14 @@ final class AppState: ObservableObject {
     @Published var errorMessage: String?
     @Published var modelReady = false
     @Published var modelPath: String?
+    @Published var usingBundledModel = false
     @Published var backendName = ""
     @Published var micGranted = false
     @Published var accessibilityTrusted = false
     @Published var sensitivity: Double = 0.55
     @Published var level: Float = 0
+    @Published var inputDevices: [AudioInputDevice] = []
+    @Published var selectedInputUID = ""
     @Published private(set) var listenMode: ListenMode = .off
 
     enum ListenMode {
@@ -45,6 +49,11 @@ final class AppState: ObservableObject {
     private var stopRequested = false
     private var pendingUtterances = 0
     private var speaking = false
+    private let inputWatcher = AudioInputWatcher()
+    private var missingInputSince: Date?
+    private static let customModelKey = "customModelPath"
+    private static let inputUIDKey = "inputDeviceUID"
+    private static let missingInputGrace: TimeInterval = 2.0
 
     var isArmed: Bool {
         switch phase {
@@ -78,22 +87,182 @@ final class AppState: ObservableObject {
         refreshPermissions()
         pipeline.setSensitivity(Float(sensitivity))
         locateModel()
+        refreshInputDevices()
+        capture.onConfigurationChange = { [weak self] in
+            Task { @MainActor in self?.handleInputDevicesChanged() }
+        }
+        inputWatcher.start { [weak self] in
+            Task { @MainActor in self?.handleInputDevicesChanged() }
+        }
     }
 
     func locateModel() {
-        if let url = ModelLocator.locate() {
+        let custom = UserDefaults.standard.string(forKey: Self.customModelKey)
+            .map { URL(fileURLWithPath: $0) }
+        var extras: [URL] = []
+        if let bundled = ModelLocator.bundledModelsDirectory() {
+            extras.append(bundled)
+        }
+        if let url = ModelLocator.locate(extraRoots: extras, userOverride: custom) {
             modelPath = url.path
-            errorMessage = nil
+            usingBundledModel = bundledModelURL.map { $0.standardizedFileURL.path == url.standardizedFileURL.path } ?? false
+            if let custom, !ModelLocator.isUsableModel(custom) {
+                errorMessage = "自定义模型不可用，已改用内置模型"
+            } else {
+                errorMessage = nil
+            }
         } else {
             modelPath = nil
+            usingBundledModel = false
             errorMessage = TranscriberError.modelMissing.localizedDescription
         }
+    }
+
+    func chooseModel() {
+        let panel = NSOpenPanel()
+        panel.title = "选择识别模型"
+        panel.prompt = "使用"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [UTType(filenameExtension: "gguf") ?? .data]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard ModelLocator.isUsableModel(url) else {
+            errorMessage = "这个文件不像是可用的识别模型"
+            return
+        }
+        UserDefaults.standard.set(url.path, forKey: Self.customModelKey)
+        reloadModel()
+    }
+
+    func useBundledModel() {
+        UserDefaults.standard.removeObject(forKey: Self.customModelKey)
+        reloadModel()
+    }
+
+    private func reloadModel() {
+        transcriber.unload()
+        modelReady = false
+        backendName = ""
+        locateModel()
+    }
+
+    private var bundledModelURL: URL? {
+        ModelLocator.bundledModelsDirectory()?.appendingPathComponent(ModelLocator.defaultFileName)
     }
 
     func refreshPermissions() {
         accessibilityTrusted = inserter.isTrusted
         Task {
             micGranted = await AudioCapture.requestMicrophoneAccess()
+        }
+    }
+
+    func refreshInputDevices() {
+        inputDevices = AudioInputs.list()
+        let saved = UserDefaults.standard.string(forKey: Self.inputUIDKey) ?? ""
+        if saved.isEmpty {
+            selectedInputUID = ""
+            missingInputSince = nil
+            return
+        }
+        if inputDevices.contains(where: { $0.uid == saved }) {
+            selectedInputUID = saved
+            missingInputSince = nil
+            return
+        }
+        selectedInputUID = saved
+        let now = Date()
+        if missingInputSince == nil {
+            missingInputSince = now
+            return
+        }
+        guard now.timeIntervalSince(missingInputSince!) >= Self.missingInputGrace else { return }
+        selectedInputUID = ""
+        UserDefaults.standard.removeObject(forKey: Self.inputUIDKey)
+        missingInputSince = nil
+        if errorMessage == nil {
+            errorMessage = "上次选择的麦克风已断开，已改用系统默认"
+        }
+    }
+
+    func setInputDevice(uid: String) {
+        missingInputSince = nil
+        selectedInputUID = uid
+        if uid.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.inputUIDKey)
+        } else {
+            UserDefaults.standard.set(uid, forKey: Self.inputUIDKey)
+        }
+        restartCaptureKeepingUI()
+    }
+
+    private func handleInputDevicesChanged() {
+        let oldDefault = inputDevices.first(where: \.isDefault)?.uid
+        let oldSelected = selectedInputUID
+        let oldDeviceID = inputDevices.first(where: { $0.uid == oldSelected })?.deviceID
+        refreshInputDevices()
+        let newDefault = inputDevices.first(where: \.isDefault)?.uid
+        let newDeviceID = inputDevices.first(where: { $0.uid == selectedInputUID })?.deviceID
+        let selectedLost = !oldSelected.isEmpty && selectedInputUID != oldSelected
+        let defaultChanged = oldDefault != newDefault
+        let usingDefault = selectedInputUID.isEmpty
+        let deviceReappeared = oldSelected == selectedInputUID
+            && !selectedInputUID.isEmpty
+            && oldDeviceID != newDeviceID
+        guard isArmed, !stopRequested, phase != .preparing else { return }
+        if selectedLost || deviceReappeared || (usingDefault && defaultChanged) {
+            restartCaptureKeepingUI()
+        }
+    }
+
+    private func restartCaptureKeepingUI() {
+        guard isArmed, !stopRequested, phase != .preparing else { return }
+        do {
+            try startCapture()
+            if pendingUtterances > 0 {
+                phase = .transcribing
+                statusLine = "识别中"
+            } else {
+                phase = .listening
+                statusLine = listeningHint
+            }
+        } catch {
+            stopRequested = true
+            capture.stop()
+            phase = .error
+            statusLine = "麦克风切换失败"
+            errorMessage = error.localizedDescription
+            listenMode = .off
+        }
+    }
+
+    var currentInputLabel: String {
+        if selectedInputUID.isEmpty {
+            if let def = inputDevices.first(where: \.isDefault) {
+                return "系统默认 · \(def.name)"
+            }
+            return "系统默认"
+        }
+        return inputDevices.first(where: { $0.uid == selectedInputUID })?.menuLabel ?? "系统默认"
+    }
+
+    func openSettings() {
+        refreshInputDevices()
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        DispatchQueue.main.async {
+            for window in NSApp.windows {
+                let typeName = String(describing: type(of: window))
+                let looksLikeSettings = window.title.contains("设置")
+                    || window.title.contains("Settings")
+                    || typeName.contains("Settings")
+                    || typeName.contains("Preferences")
+                if looksLikeSettings {
+                    window.makeKeyAndOrderFront(nil)
+                }
+            }
         }
     }
 
@@ -172,16 +341,8 @@ final class AppState: ObservableObject {
                 try transcriber.load(modelURL: URL(fileURLWithPath: modelPath))
                 modelReady = true
                 backendName = transcriber.backendName
-                pipeline.reset()
-                speaking = false
-                let pipeline = self.pipeline
-                try capture.start { [weak self] samples in
-                    pipeline.process(samples) { snapshot in
-                        Task { @MainActor in
-                            self?.applyAudio(snapshot)
-                        }
-                    }
-                }
+                refreshInputDevices()
+                try startCapture()
                 guard !self.stopRequested else {
                     self.capture.stop()
                     self.phase = .idle
@@ -233,9 +394,24 @@ final class AppState: ObservableObject {
     }
 
     func quit() {
+        inputWatcher.stop()
         stopListening()
         transcriber.unload()
         NSApp.terminate(nil)
+    }
+
+    private func startCapture() throws {
+        pipeline.reset()
+        speaking = false
+        let pipeline = self.pipeline
+        let uid = selectedInputUID.isEmpty ? nil : selectedInputUID
+        try capture.start(deviceUID: uid) { [weak self] samples in
+            pipeline.process(samples) { snapshot in
+                Task { @MainActor in
+                    self?.applyAudio(snapshot)
+                }
+            }
+        }
     }
 
     private func applyAudio(_ snapshot: AudioPipeline.Snapshot) {
@@ -245,7 +421,7 @@ final class AppState: ObservableObject {
         for event in snapshot.events {
             handle(event)
         }
-        if snapshot.events.isEmpty, snapshot.inSpeech, phase == .listening {
+        if snapshot.events.isEmpty, snapshot.inSpeech, phase == .listening || phase == .transcribing {
             phase = .capturing
             statusLine = "说话中"
         }
@@ -254,9 +430,7 @@ final class AppState: ObservableObject {
     private func handle(_ event: EnergyVAD.Event) {
         switch event {
         case .speechStart:
-            if phase != .transcribing {
-                phase = .capturing
-            }
+            phase = .capturing
             statusLine = "说话中"
         case .discardedShort:
             if pendingUtterances == 0 && !stopRequested {

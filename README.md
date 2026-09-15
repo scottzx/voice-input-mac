@@ -7,31 +7,27 @@
 1. **双击右 ⌥**：进入持续听写，再双击关闭。
 2. **长按右 ⌥**：按住期间听写，松开结束。
 3. 音量超过环境底噪 → 开始录一段。
-4. 静音超过约 550 ms → 这一段结束，立即识别并 `⌘V` 到当前 App。
+4. 静音超过约 550 ms → 这一段结束，立即识别并 `⌘V` 到当前 App。上一句识别时仍可继续说下一句。
 5. 菜单「开始持续听写」和双击右 ⌥ 相同。热键需要辅助功能权限。
+6. 菜单里可选麦克风（系统默认 / 内置 / 蓝牙 / USB）。AirPods 戴上或摘下后列表会自己更新。
 
-默认模型：`SenseVoiceSmall-Q8_0.gguf`（中英日韩，单段最长约 28 秒）。
+默认模型：`SenseVoiceSmall-Q8_0.gguf`（中英日韩，单段最长约 28 秒）。`make app` 会把这份权重拷进 `VoiceInputMac.app/Contents/Resources/models/`，用户打开就能用。设置里可以改选其他 `.gguf`。
 
 ## 要求
 
 - Apple Silicon，macOS 13+
 - cmake、ninja、Xcode CLT
 - 本机已有 `transcribe.cpp`（开发机上在 `1agents_app/reference_repo/transcribe.cpp`）
-- 模型文件，按这个顺序找：
+- 打包时能找到默认模型（约 241 MB）：
 
 ```text
 $VOICE_INPUT_MODEL
-~/Library/Application Support/VoiceInputMac/models/SenseVoiceSmall-Q8_0.gguf
-~/.voice_input_mac/models/SenseVoiceSmall-Q8_0.gguf
-~/.1agents/models/SenseVoiceSmall-Q8_0.gguf
 $TRANSCRIBE_CPP/models/SenseVoiceSmall-Q8_0.gguf
 ```
 
-当前开发机上的完整模型在：
+运行时查找顺序：用户在设置里选的模型 → `$VOICE_INPUT_MODEL` → 应用包内置模型 → 本机 Application Support / `~/.voice_input_mac` / `~/.1agents` / 开发目录。
 
-`1agents_app/reference_repo/transcribe.cpp/models/SenseVoiceSmall-Q8_0.gguf`
-
-`~/.1agents/models/` 里那条软链指向已经不存在的 `modules/transcribe.cpp`，应用会跳过损坏的占位文件。
+`~/.1agents/models/` 里那条软链若指向已经不存在的文件，应用会跳过。
 
 ## 构建
 
@@ -40,7 +36,7 @@ cd services/voice_input_mac
 make            # 编 macOS xcframework + 应用
 make run        # 打开 VoiceInputMac.app
 make test
-make install    # 拷到 ~/Applications
+make install    # 拷到 ~/Applications/VoiceInputMac.app，给别人先用这版
 ```
 
 第一次 `make native` 会编 ggml/Metal，大概几分钟。之后只改 Swift 时 `make app` 即可。

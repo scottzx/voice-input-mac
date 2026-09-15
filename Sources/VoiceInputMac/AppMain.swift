@@ -31,6 +31,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         AppState.shared.bootstrap()
         hud = HUDController(state: AppState.shared)
         hud?.start()
+        NotificationCenter.default.addObserver(
+            forName: NSWindow.willCloseNotification,
+            object: nil,
+            queue: .main
+        ) { note in
+            guard let window = note.object as? NSWindow else { return }
+            let typeName = String(describing: type(of: window))
+            let looksLikeSettings = window.title.contains("设置")
+                || window.title.contains("Settings")
+                || typeName.contains("Settings")
+                || typeName.contains("Preferences")
+            if looksLikeSettings {
+                NSApp.setActivationPolicy(.accessory)
+            }
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {

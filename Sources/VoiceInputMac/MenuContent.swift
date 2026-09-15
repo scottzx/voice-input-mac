@@ -17,6 +17,16 @@ struct MenuContent: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Divider()
+            Text("麦克风")
+            Button(menuCheck(state.selectedInputUID.isEmpty) + "系统默认") {
+                state.setInputDevice(uid: "")
+            }
+            ForEach(state.inputDevices) { device in
+                Button(menuCheck(state.selectedInputUID == device.uid) + device.menuLabel) {
+                    state.setInputDevice(uid: device.uid)
+                }
+            }
+            Divider()
             statusRow
             if let last = optionalLast {
                 Text(last)
@@ -35,15 +45,8 @@ struct MenuContent: View {
                 state.promptAccessibility()
             }
             .disabled(state.accessibilityTrusted)
-            if #available(macOS 14.0, *) {
-                SettingsLink {
-                    Text("打开设置")
-                }
-            } else {
-                Button("打开设置") {
-                    NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-                    NSApp.activate(ignoringOtherApps: true)
-                }
+            Button("打开设置") {
+                state.openSettings()
             }
             Divider()
             Button("退出") {
@@ -51,6 +54,7 @@ struct MenuContent: View {
             }
         }
         .padding(.vertical, 4)
+        .onAppear { state.refreshInputDevices() }
     }
 
     private var statusRow: some View {
@@ -59,19 +63,27 @@ struct MenuContent: View {
             Text(modelCaption)
                 .font(.caption)
                 .foregroundStyle(.secondary)
+            Text(state.currentInputLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 
     private var modelCaption: String {
         if let path = state.modelPath {
             let name = URL(fileURLWithPath: path).lastPathComponent
+            let origin = state.usingBundledModel ? "内置" : "自定义"
             let backend = state.backendName.isEmpty ? "未加载" : state.backendName
-            return "\(name) · \(backend)"
+            return "\(origin) \(name) · \(backend)"
         }
         return "未找到模型"
     }
 
     private var optionalLast: String? {
         state.lastTranscript.isEmpty ? nil : state.lastTranscript
+    }
+
+    private func menuCheck(_ on: Bool) -> String {
+        on ? "✓ " : "    "
     }
 }

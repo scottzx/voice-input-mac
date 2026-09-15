@@ -7,8 +7,12 @@ public enum ModelLocator {
         fileName: String = defaultFileName,
         env: [String: String] = ProcessInfo.processInfo.environment,
         home: URL = FileManager.default.homeDirectoryForCurrentUser,
-        extraRoots: [URL] = []
+        extraRoots: [URL] = [],
+        userOverride: URL? = nil
     ) -> URL? {
+        if let userOverride, isUsableModel(userOverride) {
+            return userOverride.standardizedFileURL
+        }
         if let override = env["VOICE_INPUT_MODEL"], !override.isEmpty {
             let url = URL(fileURLWithPath: override)
             return isUsableModel(url) ? url.standardizedFileURL : nil
@@ -37,6 +41,10 @@ public enum ModelLocator {
             }
         }
         return nil
+    }
+
+    public static func bundledModelsDirectory(bundle: Bundle = .main) -> URL? {
+        bundle.resourceURL?.appendingPathComponent("models")
     }
 
     public static func isUsableModel(_ url: URL, fm: FileManager = .default) -> Bool {

@@ -48,6 +48,29 @@ final class EnergyVADTests: XCTestCase {
         XCTAssertFalse(events.contains { if case .speechEnd = $0 { return true }; return false })
     }
 
+    func testSecondUtteranceAfterHangoverIsCaptured() {
+        var config = EnergyVAD.Config()
+        config.hangoverMs = 200
+        config.minSpeechMs = 80
+        config.minUtteranceMs = 80
+        config.preRollMs = 40
+        config.absStart = 0.02
+        config.absEnd = 0.01
+        var vad = EnergyVAD(config: config)
+
+        let first = sine(hz: 220, seconds: 0.5, amplitude: 0.2)
+        let gap = [Float](repeating: 0, count: 16_000 / 2)
+        let second = sine(hz: 330, seconds: 0.5, amplitude: 0.2)
+        let tail = [Float](repeating: 0, count: 16_000 / 2)
+        let events = vad.process(first + gap + second + tail)
+        let ends = events.compactMap { event -> [Float]? in
+            if case .speechEnd(let pcm) = event { return pcm }
+            return nil
+        }
+        XCTAssertEqual(ends.count, 2)
+        XCTAssertFalse(vad.inSpeech)
+    }
+
     func testFlushEndsOpenUtterance() {
         var vad = EnergyVAD()
         _ = vad.process(sine(hz: 180, seconds: 0.8, amplitude: 0.25))
