@@ -31,7 +31,8 @@ run: app
 
 install: app
 	mkdir -p "$(HOME)/Applications"
-	rsync -a --delete "$(APP)" "$(HOME)/Applications/VoiceInputMac.app"
+	rm -rf "$(HOME)/Applications/VoiceInputMac.app"
+	rsync -a "$(APP)/" "$(HOME)/Applications/VoiceInputMac.app/"
 	@echo "installed $(HOME)/Applications/VoiceInputMac.app"
 
 clean:
