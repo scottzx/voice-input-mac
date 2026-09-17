@@ -1,25 +1,35 @@
 import Foundation
 
-/// Right Option: short double-tap toggles sticky listen; press-and-hold starts,
-/// release ends. Pure state machine so the timing rules can be unit-tested.
+/// Right Option state machine:
+/// - press-and-hold past `longPress`: `holdStart` on entry, `holdEnd` on release.
+/// - single quick tap: `clickToggle` after the `doubleClick` window expires with no second tap.
+/// - two quick taps within `doubleClick`: `doubleClickPolish` immediately on the second release.
 public struct RightOptionGesture: Sendable {
     public enum Event: Sendable, Equatable {
         case holdStart
         case holdEnd
-        case stickyToggle
+        case clickToggle
+        case doubleClickPolish
     }
 
     public var longPress: TimeInterval
     public var doubleClick: TimeInterval
+    public var singleTapImmediate: Bool
 
     private var down = false
     private var holding = false
     private var downAt: TimeInterval = 0
     private var lastTapAt: TimeInterval = 0
+    private var waitingSecondTap = false
 
-    public init(longPress: TimeInterval = 0.28, doubleClick: TimeInterval = 0.38) {
+    public init(
+        longPress: TimeInterval = 0.28,
+        doubleClick: TimeInterval = 0.50,
+        singleTapImmediate: Bool = false
+    ) {
         self.longPress = longPress
         self.doubleClick = doubleClick
+        self.singleTapImmediate = singleTapImmediate
     }
 
     public var isDown: Bool { down }
@@ -41,13 +51,21 @@ public struct RightOptionGesture: Sendable {
         if holding {
             holding = false
             lastTapAt = 0
+            waitingSecondTap = false
             return .holdEnd
         }
-        if lastTapAt > 0, now - lastTapAt <= doubleClick {
+        if singleTapImmediate {
             lastTapAt = 0
-            return .stickyToggle
+            waitingSecondTap = false
+            return .clickToggle
+        }
+        if waitingSecondTap, lastTapAt > 0, now - lastTapAt <= doubleClick {
+            waitingSecondTap = false
+            lastTapAt = 0
+            return .doubleClickPolish
         }
         lastTapAt = now
+        waitingSecondTap = true
         return nil
     }
 
@@ -56,7 +74,17 @@ public struct RightOptionGesture: Sendable {
         guard down, !holding else { return nil }
         guard now - downAt >= longPress - 0.001 else { return nil }
         holding = true
+        waitingSecondTap = false
         lastTapAt = 0
         return .holdStart
+    }
+
+    /// Call when the click-window timer fires. Emits `clickToggle` only when no
+    /// second tap arrived in time and no key is currently held.
+    public mutating func clickWindowExpired(now: TimeInterval) -> Event? {
+        guard waitingSecondTap, !down else { return nil }
+        waitingSecondTap = false
+        lastTapAt = 0
+        return .clickToggle
     }
 }

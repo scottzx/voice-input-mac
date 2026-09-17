@@ -4,18 +4,20 @@
 
 ## 行为
 
-1. **双击右 ⌥**：进入持续听写，再双击关闭。
-2. **长按右 ⌥**：按住期间听写，松开结束。
-3. 音量超过环境底噪 → 开始录一段。
+1. **单击左 ⌘**：切换持续听写开关。
+2. **长按左 ⌘**：按住期间听写，松开结束。
+3. **单击或双击右 ⌥**：让大模型整理当前 App 里选中的文字，没有选区时会提示先选中。
+4. 音量超过环境底噪 → 开始录一段。
 4. 静音超过约 550 ms → 这一段结束，立即识别并 `⌘V` 到当前 App。上一句识别时仍可继续说下一句。
-5. 菜单「开始持续听写」和双击右 ⌥ 相同。热键需要辅助功能权限。
+5. 菜单「开始持续听写」和单击右 ⌥ 相同。热键需要辅助功能权限。
 6. 菜单里可选麦克风（系统默认 / 内置 / 蓝牙 / USB）。AirPods 戴上或摘下后列表会自己更新。
+7. 单击或双击右 ⌥ 的整理功能需要在设置里启用并填写 OpenAI 兼容的 Base URL / API Key / 模型名（OpenAI、DeepSeek、Moonshot、自建网关、本地 Ollama 兼容入口都可以）。
 
 默认模型：`SenseVoiceSmall-Q8_0.gguf`（中英日韩，单段最长约 28 秒）。`make app` 会把这份权重拷进 `VoiceInputMac.app/Contents/Resources/models/`，用户打开就能用。设置里可以改选其他 `.gguf`。
 
 ## 要求
 
-- Apple Silicon，macOS 13+
+- Apple Silicon，macOS 14+
 - cmake、ninja、Xcode CLT
 - 本机已有 `transcribe.cpp`（开发机上在 `1agents_app/reference_repo/transcribe.cpp`）
 - 打包时能找到默认模型（约 241 MB）：
@@ -37,6 +39,18 @@ make            # 编 macOS xcframework + 应用
 make run        # 打开 VoiceInputMac.app
 make test
 make install    # 拷到 ~/Applications/VoiceInputMac.app，给别人先用这版
+make dmg        # 打成 dist/VoiceInputMac-<version>.dmg，拖进「应用程序」即可
+make signed-dmg # Developer ID 签名后的 dmg（给外人装还要公证）
+make release-dmg # 签名 + 公证，别人双击就能装
+```
+
+对外分发前先存公证密码（Apple ID 的 App 专用密码，不是登录密码）：
+
+```bash
+xcrun notarytool store-credentials VoiceInputNotary \
+  --apple-id "xiaofeng.zeng@qq.com" \
+  --team-id "3HJ3R6SXAL" \
+  --password "xxxx-xxxx-xxxx-xxxx"
 ```
 
 第一次 `make native` 会编 ggml/Metal，大概几分钟。之后只改 Swift 时 `make app` 即可。

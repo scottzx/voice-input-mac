@@ -4,16 +4,24 @@ import VoiceInputCore
 
 struct MenuContent: View {
     @EnvironmentObject private var state: AppState
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Button(state.listenMode == .sticky ? "停止持续听写" : "开始持续听写") {
                 state.toggle()
             }
-            Text("双击右 ⌥ 保持听写，再双击关闭")
+            Button("整理选中内容") {
+                state.polishSelection()
+            }
+            .disabled(!state.polisherConfig.isConfigured || state.isPolishing)
+            Text("单击左 ⌘ 切换听写")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("长按右 ⌥ 说话，松开关闭")
+            Text("长按左 ⌘ 说话，松开关闭")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("单击或双击右 ⌥ 让大模型整理选中的文字")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Divider()
@@ -47,6 +55,7 @@ struct MenuContent: View {
             .disabled(state.accessibilityTrusted)
             Button("打开设置") {
                 state.openSettings()
+                openSettings()
             }
             Divider()
             Button("退出") {

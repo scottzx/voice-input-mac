@@ -4,33 +4,21 @@ import PackageDescription
 let package = Package(
     name: "voice-input-mac",
     platforms: [
-        .macOS(.v13),
+        .macOS(.v14),
     ],
     products: [
         .executable(name: "VoiceInputMac", targets: ["VoiceInputMac"]),
         .library(name: "VoiceInputCore", targets: ["VoiceInputCore"]),
     ],
+    dependencies: [
+        .package(path: "../../../mac_app/TranscribeKit"),
+    ],
     targets: [
-        .binaryTarget(
-            name: "CTranscribe",
-            path: "Vendor/TranscribeCpp.xcframework"
-        ),
-        .target(
-            name: "TranscribeCpp",
-            dependencies: ["CTranscribe"],
-            path: "vendor/transcribe-cpp/Sources/TranscribeCpp",
-            linkerSettings: [
-                .linkedLibrary("c++"),
-                .linkedLibrary("z"),
-                .linkedFramework("Accelerate"),
-                .linkedFramework("Foundation"),
-                .linkedFramework("Metal"),
-                .linkedFramework("MetalKit"),
-            ]
-        ),
         .target(
             name: "VoiceInputCore",
-            dependencies: ["TranscribeCpp"],
+            dependencies: [
+                .product(name: "TranscribeKit", package: "TranscribeKit"),
+            ],
             path: "Sources/VoiceInputCore",
             linkerSettings: [
                 .linkedFramework("AppKit"),

@@ -31,6 +31,10 @@ final class AppState: ObservableObject {
     @Published var level: Float = 0
     @Published var inputDevices: [AudioInputDevice] = []
     @Published var selectedInputUID = ""
+    @Published var polisherConfig: PolisherConfig = PolisherConfig()
+    @Published private(set) var availableModels: [String] = []
+    @Published private(set) var isFetchingModels = false
+    @Published private(set) var isPolishing = false
     @Published private(set) var listenMode: ListenMode = .off
 
     enum ListenMode {
@@ -39,11 +43,13 @@ final class AppState: ObservableObject {
         case sticky
     }
 
-    let hotkey = HotkeyMonitor()
+    let recordingHotkey = HotkeyMonitor()
+    let polishHotkey = HotkeyMonitor()
     private let capture = AudioCapture()
     private let transcriber = Transcriber()
     private let inserter = TextInserter()
     private let pipeline = AudioPipeline()
+    private let polisher = TextPolisher()
     private let transcribeQueue = DispatchQueue(label: "voice.input.transcribe", qos: .userInitiated)
     private var lastPasted = ""
     private var stopRequested = false
@@ -51,8 +57,10 @@ final class AppState: ObservableObject {
     private var speaking = false
     private let inputWatcher = AudioInputWatcher()
     private var missingInputSince: Date?
+    private var polishSession = 0
     private static let customModelKey = "customModelPath"
     private static let inputUIDKey = "inputDeviceUID"
+    private static let polisherKey = "polisherConfig"
     private static let missingInputGrace: TimeInterval = 2.0
 
     var isArmed: Bool {
@@ -74,16 +82,27 @@ final class AppState: ObservableObject {
     }
 
     func bootstrap() {
-        hotkey.onHoldStart = { [weak self] in
+        loadPolisherConfig()
+        // Left ⌘: single tap toggles, long press holds.
+        recordingHotkey.onHoldStart = { [weak self] in
             Task { @MainActor in self?.beginHold() }
         }
-        hotkey.onHoldEnd = { [weak self] in
+        recordingHotkey.onHoldEnd = { [weak self] in
             Task { @MainActor in self?.endHold() }
         }
-        hotkey.onStickyToggle = { [weak self] in
+        recordingHotkey.onClickToggle = { [weak self] in
             Task { @MainActor in self?.toggleSticky() }
         }
-        hotkey.register()
+        recordingHotkey.register(.leftCommand)
+        // Right ⌥: single tap or double tap polishes the selection.
+        polishHotkey.singleTapImmediate = true
+        polishHotkey.onClickToggle = { [weak self] in
+            Task { @MainActor in self?.polishSelection() }
+        }
+        polishHotkey.onDoubleClickPolish = { [weak self] in
+            Task { @MainActor in self?.polishSelection() }
+        }
+        polishHotkey.register(.rightOption)
         refreshPermissions()
         pipeline.setSensitivity(Float(sensitivity))
         locateModel()
@@ -94,6 +113,48 @@ final class AppState: ObservableObject {
         inputWatcher.start { [weak self] in
             Task { @MainActor in self?.handleInputDevicesChanged() }
         }
+    }
+
+    func updatePolisherConfig(_ config: PolisherConfig) {
+        polisherConfig = config
+        polisher.config = config
+        if let data = try? JSONEncoder().encode(config) {
+            UserDefaults.standard.set(data, forKey: Self.polisherKey)
+        }
+    }
+
+    func fetchAvailableModels() {
+        guard polisherConfig.isConfigured else {
+            errorMessage = "请先填写 Base URL 和 API Key"
+            return
+        }
+        guard !isFetchingModels else { return }
+        isFetchingModels = true
+        errorMessage = nil
+        Task {
+            do {
+                let models = try await polisher.listModels()
+                await MainActor.run {
+                    self.availableModels = models
+                    self.isFetchingModels = false
+                    self.statusLine = "已获取 \(models.count) 个模型"
+                }
+            } catch {
+                await MainActor.run {
+                    self.isFetchingModels = false
+                    self.errorMessage = "获取模型列表失败：\(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    private func loadPolisherConfig() {
+        guard let data = UserDefaults.standard.data(forKey: Self.polisherKey),
+              let stored = try? JSONDecoder().decode(PolisherConfig.self, from: data) else {
+            return
+        }
+        polisherConfig = stored
+        polisher.config = stored
     }
 
     func locateModel() {
@@ -251,19 +312,6 @@ final class AppState: ObservableObject {
         refreshInputDevices()
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
-        DispatchQueue.main.async {
-            for window in NSApp.windows {
-                let typeName = String(describing: type(of: window))
-                let looksLikeSettings = window.title.contains("设置")
-                    || window.title.contains("Settings")
-                    || typeName.contains("Settings")
-                    || typeName.contains("Preferences")
-                if looksLikeSettings {
-                    window.makeKeyAndOrderFront(nil)
-                }
-            }
-        }
     }
 
     func setSensitivity(_ value: Double) {
@@ -307,9 +355,9 @@ final class AppState: ObservableObject {
 
     private var listeningHint: String {
         switch listenMode {
-        case .sticky: return "等待说话 · 双击右 ⌥ 结束"
-        case .hold: return "等待说话 · 松开右 ⌥ 结束"
-        case .off: return "等待说话"
+        case .sticky: return "等待输入"
+        case .hold: return "等待输入"
+        case .off: return "等待输入"
         }
     }
 
@@ -390,6 +438,94 @@ final class AppState: ObservableObject {
         inserter.openAccessibilitySettings()
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.refreshPermissions()
+        }
+    }
+
+    func polishSelection() {
+        guard !isPolishing else { return }
+        guard polisherConfig.isConfigured else {
+            flashPolishFeedback("整理功能未启用，请在设置里启用并填写 API key。", isError: true)
+            return
+        }
+        guard inserter.isTrusted else {
+            flashPolishFeedback(
+                "整理需要「辅助功能」权限。打开系统设置 › 隐私与安全性 › 辅助功能，勾上 VoiceInputMac。",
+                isError: true
+            )
+            return
+        }
+
+        guard let input = inserter.readSelection(), !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            flashPolishFeedback("请先在其它 App 里选中要整理的文字。", isError: true)
+            return
+        }
+
+        polishSession += 1
+        let session = polishSession
+        isPolishing = true
+        statusLine = "整理中…"
+        Task {
+            do {
+                let polished = try await polisher.polish(input)
+                await MainActor.run {
+                    guard self.polishSession == session else { return }
+                    self.applyPolished(polished, session: session)
+                }
+            } catch {
+                await MainActor.run {
+                    guard self.polishSession == session else { return }
+                    self.flashPolishFeedback(error.localizedDescription, isError: true)
+                }
+            }
+        }
+    }
+
+    /// Briefly arm the polish HUD so the user sees feedback even when the
+    /// polish aborts before the network call (no selection / not configured).
+    private func flashPolishFeedback(_ message: String, isError: Bool) {
+        polishSession += 1
+        let session = polishSession
+        isPolishing = true
+        statusLine = message
+        if isError {
+            errorMessage = message
+        } else {
+            errorMessage = nil
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) { [weak self] in
+            guard let self, self.polishSession == session else { return }
+            self.isPolishing = false
+            if self.statusLine == message {
+                self.statusLine = "空闲"
+            }
+        }
+    }
+
+    private func applyPolished(_ polished: String, session: Int) {
+        defer { isPolishing = false }
+        guard !polished.isEmpty else {
+            flashPolishFeedback("整理结果为空", isError: true)
+            return
+        }
+        // `insert` already tries `insertViaAX` (which sets the focused element's
+        // selected text) before falling back to unicode keystrokes / paste, so a
+        // single call replaces the selection in every app that supports it and
+        // degrades gracefully otherwise.
+        if inserter.insert(polished) {
+            statusLine = "已整理"
+        } else {
+            statusLine = "整理完成但未能写入"
+            errorMessage = "整理完成但没找到可写入的位置。"
+        }
+        lastTranscript = polished
+        lastPasted = polished
+
+        let currentStatus = statusLine
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            guard let self, self.polishSession == session else { return }
+            if self.statusLine == currentStatus {
+                self.statusLine = "空闲"
+            }
         }
     }
 

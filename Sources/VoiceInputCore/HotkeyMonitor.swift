@@ -2,24 +2,42 @@ import AppKit
 import Carbon
 import Foundation
 
-/// Right Option: double-tap keeps listening, double-tap again stops;
-/// long-press starts, release stops.
+/// Long-press starts/stops; single tap toggles; double tap triggers polish.
+/// One monitor owns one `Chord` (one key). Use two monitors for two keys.
 public final class HotkeyMonitor {
     public struct Chord: Equatable {
         public var display: String
-        public static let rightOption = Chord(display: "右 ⌥")
+        public var keyCode: UInt16
+        /// Modifier flag that flips on/off when the chord's key is pressed.
+        public var modifierFlag: NSEvent.ModifierFlags
+
+        public static let rightOption = Chord(
+            display: "右 ⌥",
+            keyCode: UInt16(kVK_RightOption),
+            modifierFlag: .option
+        )
+        public static let leftCommand = Chord(
+            display: "左 ⌘",
+            keyCode: UInt16(kVK_Command),
+            modifierFlag: .command
+        )
     }
 
     public var onHoldStart: (() -> Void)?
     public var onHoldEnd: (() -> Void)?
-    public var onStickyToggle: (() -> Void)?
+    public var onClickToggle: (() -> Void)?
+    public var onDoubleClickPolish: (() -> Void)?
     public private(set) var chord: Chord = .rightOption
+    public var singleTapImmediate: Bool {
+        get { gesture.singleTapImmediate }
+        set { gesture.singleTapImmediate = newValue }
+    }
 
     private var gesture = RightOptionGesture()
     private var globalMonitor: Any?
     private var localMonitor: Any?
     private var longPressWork: DispatchWorkItem?
-    private let rightOptionKey: UInt16 = UInt16(kVK_RightOption)
+    private var clickWindowWork: DispatchWorkItem?
 
     public init() {}
 
@@ -37,6 +55,7 @@ public final class HotkeyMonitor {
 
     public func unregister() {
         cancelLongPress()
+        cancelClickWindow()
         if let globalMonitor {
             NSEvent.removeMonitor(globalMonitor)
             self.globalMonitor = nil
@@ -45,20 +64,33 @@ public final class HotkeyMonitor {
             NSEvent.removeMonitor(localMonitor)
             self.localMonitor = nil
         }
-        gesture = RightOptionGesture()
+        let wasImmediate = gesture.singleTapImmediate
+        gesture = RightOptionGesture(singleTapImmediate: wasImmediate)
     }
 
     deinit { unregister() }
 
     private func handle(_ event: NSEvent) {
-        guard event.keyCode == rightOptionKey else { return }
-        let down = event.modifierFlags.contains(.option)
+        // Ignore events synthesized by TextInserter (e.g. Cmd+C / Cmd+V)
+        if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == TextInserter.syntheticEventMagic {
+            return
+        }
+        // `flagsChanged` fires for *every* modifier; gate on the chord's keyCode.
+        guard event.keyCode == chord.keyCode else { return }
+        let down = event.modifierFlags.contains(chord.modifierFlag)
         if down {
+            cancelClickWindow()
             guard let deadline = gesture.keyDown(now: event.timestamp) else { return }
             scheduleLongPress(deadline: deadline, now: event.timestamp)
         } else {
             cancelLongPress()
-            emit(gesture.keyUp(now: event.timestamp))
+            let ts = event.timestamp
+            if let event = gesture.keyUp(now: ts) {
+                cancelClickWindow()
+                emit(event)
+            } else {
+                scheduleClickWindow(now: ts)
+            }
         }
     }
 
@@ -78,12 +110,29 @@ public final class HotkeyMonitor {
         longPressWork = nil
     }
 
+    private func scheduleClickWindow(now: TimeInterval) {
+        cancelClickWindow()
+        let delay = gesture.doubleClick
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.emit(self.gesture.clickWindowExpired(now: ProcessInfo.processInfo.systemUptime))
+        }
+        clickWindowWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+    }
+
+    private func cancelClickWindow() {
+        clickWindowWork?.cancel()
+        clickWindowWork = nil
+    }
+
     private func emit(_ event: RightOptionGesture.Event?) {
         guard let event else { return }
         switch event {
         case .holdStart: onHoldStart?()
         case .holdEnd: onHoldEnd?()
-        case .stickyToggle: onStickyToggle?()
+        case .clickToggle: onClickToggle?()
+        case .doubleClickPolish: onDoubleClickPolish?()
         }
     }
 }

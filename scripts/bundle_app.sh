@@ -68,21 +68,46 @@ fi
 install_name_tool -add_rpath "@executable_path/../Frameworks" \
     "$APP/Contents/MacOS/VoiceInputMac" 2>/dev/null || true
 
-# Ad-hoc signatures change every rebuild and drop Accessibility trust.
-# Prefer a stable local development identity so TCC survives `make run`.
+# Local `make app` keeps Apple Development so Accessibility TCC survives rebuilds.
+# `RELEASE_SIGN=1` (make release-dmg) uses Developer ID + hardened runtime.
 sign_app() {
     local identity="${CODESIGN_IDENTITY:-}"
     if [[ -z "$identity" ]]; then
-        identity="$(security find-identity -v -p codesigning 2>/dev/null \
-            | awk -F'\"' '/Apple Development|Developer ID Application|Mac Developer/ { print $2; exit }')"
+        # Prefer the SHA-1 hash over the friendly name so duplicate identities
+        # in the keychain don't fail codesign with "ambiguous".
+        if [[ "${RELEASE_SIGN:-}" == "1" ]]; then
+            identity="$(security find-identity -v -p codesigning 2>/dev/null \
+                | awk '/Developer ID Application/ { print $2; exit }')"
+        else
+            identity="$(security find-identity -v -p codesigning 2>/dev/null \
+                | awk '/Apple Development|Mac Developer/ { print $2; exit }')"
+        fi
     fi
-    if [[ -n "$identity" ]]; then
-        echo "codesign: $identity" >&2
-        codesign --force --deep --sign "$identity" --timestamp=none "$APP"
-    else
+    xattr -cr "$APP" 2>/dev/null || true
+    if [[ -z "$identity" ]]; then
         echo "codesign: ad-hoc (Accessibility will reset on every rebuild)" >&2
         codesign --force --deep --sign - "$APP"
+        return
     fi
+    echo "codesign: $identity" >&2
+    local extra=()
+    local app_extra=()
+    if [[ "$identity" == Developer\ ID\ Application:* || "${RELEASE_SIGN:-}" == "1" ]]; then
+        extra+=(--options runtime --timestamp)
+        app_extra+=("${extra[@]}")
+        if [[ -f "$ROOT/Resources/Release.entitlements" ]]; then
+            app_extra+=(--entitlements "$ROOT/Resources/Release.entitlements")
+        fi
+    else
+        extra+=(--timestamp=none)
+        app_extra+=("${extra[@]}")
+    fi
+    local fw="$APP/Contents/Frameworks/CTranscribe.framework"
+    if [[ -d "$fw" ]]; then
+        codesign --force --sign "$identity" "${extra[@]}" "$fw"
+    fi
+    codesign --force --sign "$identity" "${app_extra[@]}" "$APP"
+    codesign --verify --strict "$APP"
 }
 sign_app
 echo "$APP"

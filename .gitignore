@@ -3,6 +3,7 @@ Vendor/
 vendor/
 tmp/
 *.app
+dist/
 .DS_Store
 Resources/icon-candidates/
 Resources/models/

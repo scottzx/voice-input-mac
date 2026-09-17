@@ -13,6 +13,8 @@ final class HUDController {
     private let state: AppState
     private var lastStatus = ""
     private var lastPhase: AppState.Phase = .idle
+    private var lastPolishing = false
+    private var polishHideWork: DispatchWorkItem?
     private var visible = false
 
     private let panelSize = NSSize(width: 188, height: 34)
@@ -24,17 +26,24 @@ final class HUDController {
 
     func start() {
         state.$phase
-            .combineLatest(state.$statusLine, state.$level)
+            .combineLatest(state.$statusLine, state.$level, state.$isPolishing)
             .throttle(for: .milliseconds(80), scheduler: RunLoop.main, latest: true)
-            .sink { [weak self] _, _, _ in
+            .sink { [weak self] _, _, _, _ in
                 self?.render()
             }
             .store(in: &cancellables)
         render()
     }
 
+    private var shouldShow: Bool {
+        state.isArmed || state.isPolishing || polishHideWork != nil
+    }
+
     private func render() {
-        if !state.isArmed {
+        if !state.isPolishing && lastPolishing {
+            schedulePolishHide()
+        }
+        if !shouldShow {
             if visible {
                 panel?.orderOut(nil)
                 visible = false
@@ -50,6 +59,17 @@ final class HUDController {
             panel?.orderFrontRegardless()
             visible = true
         }
+    }
+
+    private func schedulePolishHide() {
+        polishHideWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.polishHideWork = nil
+            self.render()
+        }
+        polishHideWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: work)
     }
 
     private func buildPanel() {
@@ -114,18 +134,23 @@ final class HUDController {
     }
 
     private func applyContent() {
-        let color = color(for: state.phase)
-        if state.phase != lastPhase {
+        let isPolishing = state.isPolishing
+        let color: NSColor = isPolishing ? .systemPurple : color(for: state.phase)
+        if isPolishing != lastPolishing || (!isPolishing && state.phase != lastPhase) {
             dot?.layer?.backgroundColor = color.cgColor
             meterFill?.layer?.backgroundColor = color.withAlphaComponent(0.85).cgColor
+            lastPolishing = isPolishing
             lastPhase = state.phase
         }
         if state.statusLine != lastStatus {
             label?.stringValue = state.statusLine
             lastStatus = state.statusLine
         }
-        let width = 4 + CGFloat(min(max(state.level, 0), 0.2)) / 0.2 * (meterMaxWidth - 4)
+        let width = isPolishing
+            ? 4
+            : 4 + CGFloat(min(max(state.level, 0), 0.2)) / 0.2 * (meterMaxWidth - 4)
         meterFill?.frame.size.width = width
+        meterFill?.isHidden = isPolishing
     }
 
     private func color(for phase: AppState.Phase) -> NSColor {
