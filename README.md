@@ -13,23 +13,17 @@
 6. 菜单里可选麦克风（系统默认 / 内置 / 蓝牙 / USB）。AirPods 戴上或摘下后列表会自己更新。
 7. 单击或双击右 ⌥ 的整理功能需要在设置里启用并填写 OpenAI 兼容的 Base URL / API Key / 模型名（OpenAI、DeepSeek、Moonshot、自建网关、本地 Ollama 兼容入口都可以）。
 
-默认模型：`SenseVoiceSmall-Q8_0.gguf`（中英日韩，单段最长约 28 秒）。`make app` 会把这份权重拷进 `VoiceInputMac.app/Contents/Resources/models/`，用户打开就能用。设置里可以改选其他 `.gguf`。
+默认模型：`SenseVoiceSmall-Q8_0.gguf`（中英日韩，单段最长约 28 秒）。默认采用共享轻量化打包（应用包仅约 7.4 MB），运行时自动与 1Agents 工具生态（如 `@1agents/transcribe` CLI）共享 `~/.transcribe_models/` 目录中的模型。若本机尚未就绪，设置面板中支持一键从 ModelScope 国内镜像源极速下载并校验。若需构建含离线权重的独立包，可执行 `BUNDLE_MODEL=1 make app`。
 
 ## 要求
 
 - Apple Silicon，macOS 14+
 - cmake、ninja、Xcode CLT
 - 本机已有 `transcribe.cpp`（开发机上在 `1agents_app/reference_repo/transcribe.cpp`）
-- 打包时能找到默认模型（约 241 MB）：
 
-```text
-$VOICE_INPUT_MODEL
-$TRANSCRIBE_CPP/models/SenseVoiceSmall-Q8_0.gguf
-```
-
-运行时查找顺序：用户在设置里选的模型 → `$VOICE_INPUT_MODEL` → 应用包内置模型 → 本机 Application Support / `~/.voice_input_mac` / `~/.1agents` / 开发目录。
-
-`~/.1agents/models/` 里那条软链若指向已经不存在的文件，应用会跳过。
+运行时模型查找顺序：
+用户在设置里选的模型 → `$VOICE_INPUT_MODEL` → 应用包内置模型（若有） → 统一共享模型 `~/.transcribe_models/` → 本机 Application Support / `~/.voice_input_mac` / `~/.1agents` / 开发目录。
+若上述路径均未检测到，应用可在设置面板中一键极速拉取并自动加载。
 
 ## 构建
 

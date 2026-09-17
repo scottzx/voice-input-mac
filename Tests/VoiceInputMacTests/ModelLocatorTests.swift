@@ -52,4 +52,16 @@ final class ModelLocatorTests: XCTestCase {
         let found = ModelLocator.locate(env: [:], home: dir, extraRoots: [bundled], userOverride: broken)
         XCTAssertEqual(found?.path, bundledModel.path)
     }
+
+    func testFindsSharedTranscribeModels() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let sharedDir = dir.appendingPathComponent(".transcribe_models")
+        try FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
+        let sharedModel = sharedDir.appendingPathComponent("SenseVoiceSmall-Q8_0.gguf")
+        try Data(repeating: 1, count: 2_000_000).write(to: sharedModel)
+        let found = ModelLocator.locate(env: [:], home: dir)
+        XCTAssertEqual(found?.path, sharedModel.path)
+    }
 }

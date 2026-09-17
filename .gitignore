@@ -7,3 +7,7 @@ dist/
 .DS_Store
 Resources/icon-candidates/
 Resources/models/
+.1agents/
+.claude/
+.playwright-mcp/
+

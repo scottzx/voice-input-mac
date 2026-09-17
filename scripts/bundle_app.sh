@@ -20,22 +20,36 @@ if [[ -f "$ROOT/Resources/AppIcon.icns" ]]; then
 fi
 
 MODEL_NAME="SenseVoiceSmall-Q8_0.gguf"
-MODEL_SRC="${VOICE_INPUT_MODEL:-}"
-if [[ -z "$MODEL_SRC" && -n "${TRANSCRIBE_CPP:-}" ]]; then
-    MODEL_SRC="$TRANSCRIBE_CPP/models/$MODEL_NAME"
-fi
-if [[ -z "$MODEL_SRC" || ! -f "$MODEL_SRC" ]]; then
-    MODEL_SRC="$ROOT/../../1agents_app/reference_repo/transcribe.cpp/models/$MODEL_NAME"
-fi
-if [[ ! -f "$MODEL_SRC" ]]; then
-    echo "error: missing ASR model $MODEL_NAME (set TRANSCRIBE_CPP or VOICE_INPUT_MODEL)" >&2
-    exit 1
-fi
+BUNDLE_MODEL="${BUNDLE_MODEL:-0}"
+
 mkdir -p "$APP/Contents/Resources/models"
-if ! cp -c "$MODEL_SRC" "$APP/Contents/Resources/models/$MODEL_NAME" 2>/dev/null; then
-    cp "$MODEL_SRC" "$APP/Contents/Resources/models/$MODEL_NAME"
+
+if [[ "$BUNDLE_MODEL" == "1" ]]; then
+    MODEL_SRC="${VOICE_INPUT_MODEL:-}"
+    if [[ -z "$MODEL_SRC" && -n "${TRANSCRIBE_CPP:-}" ]]; then
+        MODEL_SRC="$TRANSCRIBE_CPP/models/$MODEL_NAME"
+    fi
+    if [[ -z "$MODEL_SRC" || ! -f "$MODEL_SRC" ]]; then
+        MODEL_SRC="$HOME/.transcribe_models/$MODEL_NAME"
+    fi
+    if [[ -z "$MODEL_SRC" || ! -f "$MODEL_SRC" ]]; then
+        MODEL_SRC="$HOME/.1agents/models/$MODEL_NAME"
+    fi
+    if [[ -z "$MODEL_SRC" || ! -f "$MODEL_SRC" ]]; then
+        MODEL_SRC="$ROOT/../../1agents_app/reference_repo/transcribe.cpp/models/$MODEL_NAME"
+    fi
+
+    if [[ -f "$MODEL_SRC" ]]; then
+        if ! cp -c "$MODEL_SRC" "$APP/Contents/Resources/models/$MODEL_NAME" 2>/dev/null; then
+            cp "$MODEL_SRC" "$APP/Contents/Resources/models/$MODEL_NAME"
+        fi
+        echo "model: bundled $APP/Contents/Resources/models/$MODEL_NAME" >&2
+    else
+        echo "warning: BUNDLE_MODEL=1 specified but model $MODEL_NAME not found; skipping bundling" >&2
+    fi
+else
+    echo "model: skipped bundling weights (using shared ~/.transcribe_models/ or on-demand download)" >&2
 fi
-echo "model: $APP/Contents/Resources/models/$MODEL_NAME" >&2
 
 # SwiftPM copies the CTranscribe framework next to the executable or under
 # .build; also accept the xcframework macos slice.

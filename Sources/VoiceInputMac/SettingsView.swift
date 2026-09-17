@@ -79,22 +79,48 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section("模型") {
-                Text(state.usingBundledModel ? "内置 \(ModelLocator.defaultFileName)" : (state.modelPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "未找到识别模型"))
-                Text(state.modelPath ?? "")
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .foregroundStyle(.secondary)
-                if !state.backendName.isEmpty {
-                    Text("后端 \(state.backendName)")
+                if let path = state.modelPath {
+                    let desc: String = {
+                        if state.usingBundledModel { return "内置 \(ModelLocator.defaultFileName)" }
+                        if state.isSharedModel { return "共享模型 \(ModelLocator.defaultFileName)" }
+                        return URL(fileURLWithPath: path).lastPathComponent
+                    }()
+                    Text(desc)
+                    Text(path)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .foregroundStyle(.secondary)
+                    if !state.backendName.isEmpty {
+                        Text("后端 \(state.backendName)")
+                    }
+                } else {
+                    Text("未找到识别模型")
+                        .foregroundStyle(.red)
+                    if state.isDownloadingModel {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ProgressView(value: state.downloadProgress)
+                            Text(state.downloadStatus)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        .padding(.vertical, 4)
+                    } else {
+                        Button("从 ModelScope 极速下载推荐模型 (SenseVoice)") {
+                            state.downloadRecommendedModel()
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                 }
                 HStack {
-                    Button("选择其他模型…") {
+                    Button("选择本地其他模型…") {
                         state.chooseModel()
                     }
-                    Button("使用内置模型") {
-                        state.useBundledModel()
+                    if state.modelPath != nil {
+                        Button("使用默认推荐路径") {
+                            state.useDefaultModel()
+                        }
+                        .disabled(state.usingBundledModel || state.isSharedModel)
                     }
-                    .disabled(state.usingBundledModel)
                 }
             }
             Section("权限") {

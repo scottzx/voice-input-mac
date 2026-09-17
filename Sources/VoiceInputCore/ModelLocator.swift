@@ -19,6 +19,7 @@ public enum ModelLocator {
         }
         var candidates: [URL] = extraRoots.map { $0.appendingPathComponent(fileName) }
         candidates.append(contentsOf: [
+            home.appendingPathComponent(".transcribe_models/\(fileName)"),
             home.appendingPathComponent("Library/Application Support/VoiceInputMac/models/\(fileName)"),
             home.appendingPathComponent(".voice_input_mac/models/\(fileName)"),
             home.appendingPathComponent(".1agents/models/\(fileName)"),
@@ -45,6 +46,17 @@ public enum ModelLocator {
 
     public static func bundledModelsDirectory(bundle: Bundle = .main) -> URL? {
         bundle.resourceURL?.appendingPathComponent("models")
+    }
+
+    public static func defaultSharedDirectory(home: URL = FileManager.default.homeDirectoryForCurrentUser) -> URL {
+        home.appendingPathComponent(".transcribe_models")
+    }
+
+    public static func defaultSharedModelURL(
+        fileName: String = defaultFileName,
+        home: URL = FileManager.default.homeDirectoryForCurrentUser
+    ) -> URL {
+        defaultSharedDirectory(home: home).appendingPathComponent(fileName)
     }
 
     public static func isUsableModel(_ url: URL, fm: FileManager = .default) -> Bool {

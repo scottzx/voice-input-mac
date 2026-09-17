@@ -24,6 +24,9 @@ final class AppState: ObservableObject {
     @Published var modelReady = false
     @Published var modelPath: String?
     @Published var usingBundledModel = false
+    @Published var isDownloadingModel = false
+    @Published var downloadProgress: Double = 0.0
+    @Published var downloadStatus = ""
     @Published var backendName = ""
     @Published var micGranted = false
     @Published var accessibilityTrusted = false
@@ -195,6 +198,11 @@ final class AppState: ObservableObject {
         polisher.config = stored
     }
 
+    var isSharedModel: Bool {
+        guard let modelPath else { return false }
+        return modelPath.contains(".transcribe_models")
+    }
+
     func locateModel() {
         let custom = UserDefaults.standard.string(forKey: Self.customModelKey)
             .map { URL(fileURLWithPath: $0) }
@@ -206,7 +214,7 @@ final class AppState: ObservableObject {
             modelPath = url.path
             usingBundledModel = bundledModelURL.map { $0.standardizedFileURL.path == url.standardizedFileURL.path } ?? false
             if let custom, !ModelLocator.isUsableModel(custom) {
-                errorMessage = "自定义模型不可用，已改用内置模型"
+                errorMessage = "自定义模型不可用，已改用默认共享模型"
             } else {
                 errorMessage = nil
             }
@@ -234,9 +242,43 @@ final class AppState: ObservableObject {
         reloadModel()
     }
 
-    func useBundledModel() {
+    func useDefaultModel() {
         UserDefaults.standard.removeObject(forKey: Self.customModelKey)
         reloadModel()
+    }
+
+    func useBundledModel() {
+        useDefaultModel()
+    }
+
+    func downloadRecommendedModel() {
+        guard !isDownloadingModel else { return }
+        isDownloadingModel = true
+        downloadProgress = 0.01
+        downloadStatus = "正在连接 ModelScope 镜像源..."
+        errorMessage = nil
+
+        Task { [weak self] in
+            do {
+                _ = try await ModelDownloader.shared.downloadRecommendedModel { percent, status in
+                    Task { @MainActor in
+                        AppState.shared.downloadProgress = percent
+                        AppState.shared.downloadStatus = status
+                    }
+                }
+                await MainActor.run { [weak self] in
+                    self?.isDownloadingModel = false
+                    self?.downloadProgress = 1.0
+                    self?.downloadStatus = "下载完成"
+                    self?.useDefaultModel()
+                }
+            } catch {
+                await MainActor.run { [weak self] in
+                    self?.isDownloadingModel = false
+                    self?.errorMessage = "模型下载失败: \(error.localizedDescription)"
+                }
+            }
+        }
     }
 
     private func reloadModel() {
