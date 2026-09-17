@@ -15,10 +15,10 @@ struct MenuContent: View {
                 state.polishSelection()
             }
             .disabled(!state.polisherConfig.isConfigured || state.isPolishing)
-            Text("单击左 ⌘ 切换听写")
+            Text("单击 \(state.recordingKeyChoice.chord.display) 切换听写")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text("长按左 ⌘ 说话，松开关闭")
+            Text("长按 \(state.recordingKeyChoice.chord.display) 说话，松开关闭")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             Text("单击或双击右 ⌥ 让大模型整理选中的文字")

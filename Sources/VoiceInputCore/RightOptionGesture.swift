@@ -18,6 +18,7 @@ public struct RightOptionGesture: Sendable {
 
     private var down = false
     private var holding = false
+    private var interrupted = false
     private var downAt: TimeInterval = 0
     private var lastTapAt: TimeInterval = 0
     private var waitingSecondTap = false
@@ -40,14 +41,32 @@ public struct RightOptionGesture: Sendable {
         guard !down else { return nil }
         down = true
         holding = false
+        interrupted = false
         downAt = now
         return now + longPress
+    }
+
+    /// Call when another key or modifier combination is pressed while this key is held down.
+    public mutating func interrupt() {
+        if down {
+            interrupted = true
+            holding = false
+            waitingSecondTap = false
+            lastTapAt = 0
+        }
     }
 
     /// Call on Right Option key-up.
     public mutating func keyUp(now: TimeInterval) -> Event? {
         guard down else { return nil }
         down = false
+        if interrupted {
+            interrupted = false
+            holding = false
+            lastTapAt = 0
+            waitingSecondTap = false
+            return nil
+        }
         if holding {
             holding = false
             lastTapAt = 0
@@ -71,7 +90,7 @@ public struct RightOptionGesture: Sendable {
 
     /// Call when the long-press timer fires.
     public mutating func longPressFired(now: TimeInterval) -> Event? {
-        guard down, !holding else { return nil }
+        guard down, !holding, !interrupted else { return nil }
         guard now - downAt >= longPress - 0.001 else { return nil }
         holding = true
         waitingSecondTap = false

@@ -11,6 +11,11 @@ public final class HotkeyMonitor {
         /// Modifier flag that flips on/off when the chord's key is pressed.
         public var modifierFlag: NSEvent.ModifierFlags
 
+        public static let fn = Chord(
+            display: "Fn",
+            keyCode: UInt16(kVK_Function),
+            modifierFlag: .function
+        )
         public static let rightOption = Chord(
             display: "右 ⌥",
             keyCode: UInt16(kVK_RightOption),
@@ -19,6 +24,11 @@ public final class HotkeyMonitor {
         public static let leftCommand = Chord(
             display: "左 ⌘",
             keyCode: UInt16(kVK_Command),
+            modifierFlag: .command
+        )
+        public static let rightCommand = Chord(
+            display: "右 ⌘",
+            keyCode: UInt16(kVK_RightCommand),
             modifierFlag: .command
         )
     }
@@ -44,10 +54,10 @@ public final class HotkeyMonitor {
     public func register(_ chord: Chord = .rightOption) {
         unregister()
         self.chord = chord
-        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        globalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             self?.handle(event)
         }
-        localMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+        localMonitor = NSEvent.addLocalMonitorForEvents(matching: [.flagsChanged, .keyDown]) { [weak self] event in
             self?.handle(event)
             return event
         }
@@ -75,8 +85,24 @@ public final class HotkeyMonitor {
         if event.cgEvent?.getIntegerValueField(.eventSourceUserData) == TextInserter.syntheticEventMagic {
             return
         }
-        // `flagsChanged` fires for *every* modifier; gate on the chord's keyCode.
-        guard event.keyCode == chord.keyCode else { return }
+        if event.type == .keyDown {
+            if gesture.isDown {
+                cancelLongPress()
+                cancelClickWindow()
+                gesture.interrupt()
+            }
+            return
+        }
+        // If another modifier is pressed while our chord is held down,
+        // treat it as a combination/chord and interrupt!
+        if event.keyCode != chord.keyCode {
+            if gesture.isDown {
+                cancelLongPress()
+                cancelClickWindow()
+                gesture.interrupt()
+            }
+            return
+        }
         let down = event.modifierFlags.contains(chord.modifierFlag)
         if down {
             cancelClickWindow()

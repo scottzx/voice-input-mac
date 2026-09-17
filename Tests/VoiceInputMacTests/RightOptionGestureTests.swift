@@ -86,4 +86,20 @@ final class RightOptionGestureTests: XCTestCase {
         _ = g.keyDown(now: 1.00)
         XCTAssertEqual(g.keyUp(now: 1.05), .clickToggle)
     }
+
+    func testInterruptCancelsTap() {
+        var g = RightOptionGesture(longPress: 0.28, doubleClick: 0.38)
+        _ = g.keyDown(now: 1.00)
+        g.interrupt()
+        XCTAssertNil(g.keyUp(now: 1.05))
+        XCTAssertNil(g.clickWindowExpired(now: 1.45))
+    }
+
+    func testInterruptCancelsLongPress() {
+        var g = RightOptionGesture(longPress: 0.28, doubleClick: 0.38)
+        _ = g.keyDown(now: 1.00)
+        g.interrupt()
+        XCTAssertNil(g.longPressFired(now: 1.30))
+        XCTAssertNil(g.keyUp(now: 1.50))
+    }
 }

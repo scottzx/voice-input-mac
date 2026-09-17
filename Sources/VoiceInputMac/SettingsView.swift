@@ -24,7 +24,16 @@ struct SettingsView: View {
                 LabeledContent("权限", value: state.micGranted ? "已授权" : "未授权")
             }
             Section("听写") {
-                Text("单击左 ⌘：切换听写开关。长按左 ⌘：按住说话，松开关闭。单击或双击右 ⌥：让大模型整理当前 App 里选中的文字，没有选区时会提示先选中。说话由音量 VAD 自动切段，每段识别完立刻粘贴到当前光标。需要辅助功能权限才能在其它 App 里收到热键。")
+                Picker("听写热键", selection: Binding(
+                    get: { state.recordingKeyChoice },
+                    set: { state.setRecordingKeyChoice($0) }
+                )) {
+                    ForEach(AppState.RecordingKeyChoice.allCases) { choice in
+                        Text(choice.display).tag(choice)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+                Text("单击听写热键切换开关，长按按住说话。单击或双击右 ⌥ 整理选中文字。已内置组合键拦截：按住 Command 时按 C、V 等组合键绝对不会误触发录音。")
                     .foregroundStyle(.secondary)
                 Slider(value: Binding(
                     get: { state.sensitivity },

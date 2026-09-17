@@ -36,6 +36,31 @@ final class AppState: ObservableObject {
     @Published private(set) var isFetchingModels = false
     @Published private(set) var isPolishing = false
     @Published private(set) var listenMode: ListenMode = .off
+    @Published var recordingKeyChoice: RecordingKeyChoice = .fn
+
+    enum RecordingKeyChoice: String, CaseIterable, Identifiable {
+        case fn = "fn"
+        case leftCommand = "leftCommand"
+        case rightCommand = "rightCommand"
+
+        var id: String { rawValue }
+
+        var display: String {
+            switch self {
+            case .fn: return "Fn / 地球仪 🌐（推荐，不冲突）"
+            case .leftCommand: return "左 ⌘（Command）"
+            case .rightCommand: return "右 ⌘（Command）"
+            }
+        }
+
+        var chord: HotkeyMonitor.Chord {
+            switch self {
+            case .fn: return .fn
+            case .leftCommand: return .leftCommand
+            case .rightCommand: return .rightCommand
+            }
+        }
+    }
 
     enum ListenMode {
         case off
@@ -58,6 +83,7 @@ final class AppState: ObservableObject {
     private let inputWatcher = AudioInputWatcher()
     private var missingInputSince: Date?
     private var polishSession = 0
+    private static let recordingKeyChoiceKey = "recordingKeyChoice"
     private static let customModelKey = "customModelPath"
     private static let inputUIDKey = "inputDeviceUID"
     private static let polisherKey = "polisherConfig"
@@ -81,9 +107,13 @@ final class AppState: ObservableObject {
         }
     }
 
-    func bootstrap() {
-        loadPolisherConfig()
-        // Left ⌘: single tap toggles, long press holds.
+    func setRecordingKeyChoice(_ choice: RecordingKeyChoice) {
+        recordingKeyChoice = choice
+        UserDefaults.standard.set(choice.rawValue, forKey: Self.recordingKeyChoiceKey)
+        registerRecordingHotkey()
+    }
+
+    private func registerRecordingHotkey() {
         recordingHotkey.onHoldStart = { [weak self] in
             Task { @MainActor in self?.beginHold() }
         }
@@ -93,7 +123,15 @@ final class AppState: ObservableObject {
         recordingHotkey.onClickToggle = { [weak self] in
             Task { @MainActor in self?.toggleSticky() }
         }
-        recordingHotkey.register(.leftCommand)
+        recordingHotkey.register(recordingKeyChoice.chord)
+    }
+
+    func bootstrap() {
+        loadPolisherConfig()
+        let savedKey = UserDefaults.standard.string(forKey: Self.recordingKeyChoiceKey)
+        recordingKeyChoice = savedKey.flatMap(RecordingKeyChoice.init(rawValue:)) ?? .fn
+        registerRecordingHotkey()
+
         // Right ⌥: single tap or double tap polishes the selection.
         polishHotkey.singleTapImmediate = true
         polishHotkey.onClickToggle = { [weak self] in
