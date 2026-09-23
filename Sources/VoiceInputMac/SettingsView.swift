@@ -129,6 +129,14 @@ struct SettingsView: View {
                     state.promptAccessibility()
                 }
             }
+            Section {
+                LabeledContent(
+                    "版本号",
+                    value: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "开发版本"
+                )
+                .foregroundStyle(.secondary)
+                .textSelection(.enabled)
+            }
         }
         .formStyle(.grouped)
         .frame(width: 480, height: 580)
