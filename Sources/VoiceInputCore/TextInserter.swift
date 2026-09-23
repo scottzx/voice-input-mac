@@ -24,14 +24,25 @@ public final class TextInserter {
 
     public static let syntheticEventMagic: Int64 = 0x56494D
 
-    /// Insert at the current caret. Prefers Accessibility, then unicode key events, then ⌘V.
+    /// Insert at the current caret. True means the write was requested, not acknowledged by the app.
     @discardableResult
     public func insert(_ text: String) -> Bool {
+        Self.insert(text, isTrusted: isTrusted, viaAX: insertViaAX, viaClipboard: pasteViaClipboard)
+    }
+
+    static func insert(
+        _ text: String,
+        isTrusted: Bool,
+        viaAX: (String) -> Bool,
+        viaClipboard: (String) -> Bool
+    ) -> Bool {
         guard !text.isEmpty else { return true }
-        if insertViaAX(text) { return true }
-        if insertViaUnicode(text) { return isTrusted }
-        pasteViaClipboard(text)
-        return isTrusted
+        guard isTrusted else { return false }
+        // Chromium web editors may acknowledge AXSelectedText without inserting.
+        // Paste first so the editor receives its normal paste/input events.
+        // Only fall back when no paste event was posted; never insert twice.
+        if viaClipboard(text) { return true }
+        return viaAX(text)
     }
 
     /// Read currently selected text. Prefers Accessibility, falls back to simulated ⌘C.
@@ -142,55 +153,45 @@ public final class TextInserter {
         return set == .success
     }
 
-    private func insertViaUnicode(_ text: String) -> Bool {
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let units = Array(text.utf16)
-        var index = 0
-        var posted = false
-        while index < units.count {
-            let end = min(index + 20, units.count)
-            let chunk = Array(units[index..<end])
-            let ok = chunk.withUnsafeBufferPointer { buf -> Bool in
-                guard let down = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: true),
-                      let base = buf.baseAddress else {
-                    return false
-                }
-                down.keyboardSetUnicodeString(stringLength: chunk.count, unicodeString: base)
-                down.setIntegerValueField(.eventSourceUserData, value: Self.syntheticEventMagic)
-                down.post(tap: .cgSessionEventTap)
-                let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
-                up?.setIntegerValueField(.eventSourceUserData, value: Self.syntheticEventMagic)
-                up?.post(tap: .cgSessionEventTap)
-                return true
-            }
-            if !ok { return posted }
-            posted = true
-            index = end
+    private func pasteViaClipboard(_ text: String) -> Bool {
+        guard let source = CGEventSource(stateID: .privateState),
+              let down = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: true),
+              let up = CGEvent(keyboardEventSource: source, virtualKey: CGKeyCode(kVK_ANSI_V), keyDown: false) else {
+            return false
         }
-        return posted
-    }
 
-    private func pasteViaClipboard(_ text: String) {
         let board = NSPasteboard.general
-        let previous = board.string(forType: .string)
+        // Preserve all formats, including images and file references.
+        let previous: [NSPasteboardItem] = board.pasteboardItems?.map { item in
+            let copy = NSPasteboardItem()
+            for type in item.types {
+                if let data = item.data(forType: type) {
+                    copy.setData(data, forType: type)
+                }
+            }
+            return copy
+        } ?? []
         board.clearContents()
-        board.setString(text, forType: .string)
-        let source = CGEventSource(stateID: .combinedSessionState)
-        let keyV: CGKeyCode = 0x09
-        if let down = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: true),
-           let up = CGEvent(keyboardEventSource: source, virtualKey: keyV, keyDown: false) {
-            down.flags = .maskCommand
-            up.flags = .maskCommand
-            down.setIntegerValueField(.eventSourceUserData, value: Self.syntheticEventMagic)
-            up.setIntegerValueField(.eventSourceUserData, value: Self.syntheticEventMagic)
-            down.post(tap: .cgSessionEventTap)
-            up.post(tap: .cgSessionEventTap)
+        guard board.setString(text, forType: .string) else {
+            board.writeObjects(previous)
+            return false
         }
+        let changeCount = board.changeCount
+        down.flags = .maskCommand
+        up.flags = .maskCommand
+        down.setIntegerValueField(.eventSourceUserData, value: Self.syntheticEventMagic)
+        up.setIntegerValueField(.eventSourceUserData, value: Self.syntheticEventMagic)
+        down.post(tap: .cgSessionEventTap)
+        up.post(tap: .cgSessionEventTap)
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+            // A newer copy operation belongs to the user; do not overwrite it.
+            guard board.changeCount == changeCount else { return }
             board.clearContents()
-            if let previous {
-                board.setString(previous, forType: .string)
+            if !previous.isEmpty {
+                board.writeObjects(previous)
             }
         }
+        return true
     }
 }

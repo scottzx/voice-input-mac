@@ -12,6 +12,7 @@
 5. 菜单「开始持续听写」和单击右 ⌥ 相同。热键需要辅助功能权限。
 6. 菜单里可选麦克风（系统默认 / 内置 / 蓝牙 / USB）。AirPods 戴上或摘下后列表会自己更新。
 7. 单击或双击右 ⌥ 的整理功能需要在设置里启用并填写 OpenAI 兼容的 Base URL / API Key / 模型名（OpenAI、DeepSeek、Moonshot、自建网关、本地 Ollama 兼容入口都可以）。
+8. 设置最底部显示当前安装的版本号，可选中复制，便于确认升级结果和反馈问题。
 
 默认模型：`SenseVoiceSmall-Q8_0.gguf`（中英日韩，单段最长约 28 秒）。默认采用共享轻量化打包（应用包仅约 7.4 MB），运行时自动与 1Agents 工具生态（如 `@1agents/transcribe` CLI）共享 `~/.transcribe_models/` 目录中的模型。若本机尚未就绪，设置面板中支持一键从 ModelScope 国内镜像源极速下载并校验。若需构建含离线权重的独立包，可执行 `BUNDLE_MODEL=1 make app`。
 
